@@ -47,7 +47,7 @@ func (b *Backend) Authenticate(st server.SessionType, key []byte) (string, error
 			return "", errors.Wrapf(err, "could not query database")
 		}
 
-		return string(u.ID), nil
+		return u.Username, nil
 	default:
 		return "", fmt.Errorf("mode not supported: %s", st)
 	}

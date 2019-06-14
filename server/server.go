@@ -1,10 +1,12 @@
 package server
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
 
+	"github.com/kmwenja/ruka/server/control"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 )
@@ -13,28 +15,38 @@ import (
 type Config struct {
 	Addr        string
 	HostKeyFile string
+	RootKeyFile string
 }
 
 // Backend TODO
 type Backend interface {
+	control.ShellBackend
 	Authenticate(st SessionType, key []byte) (string, error)
-	AddUser(username string, key []byte) error
 }
 
 // Start is the entry point for the server
 func Start(backend Backend, cfg *Config) error {
 	hb, err := ioutil.ReadFile(cfg.HostKeyFile)
 	if err != nil {
-		return errors.Wrapf(err, "could not open host key: %s", cfg.HostKeyFile)
+		return errors.Wrapf(err, "could not open host private key: %s", cfg.HostKeyFile)
 	}
 	hk, err := ssh.ParsePrivateKey(hb)
 	if err != nil {
-		return errors.Wrapf(err, "could not parse host key: %s", cfg.HostKeyFile)
+		return errors.Wrapf(err, "could not parse host private key: %s", cfg.HostKeyFile)
+	}
+
+	rb, err := ioutil.ReadFile(cfg.RootKeyFile)
+	if err != nil {
+		return errors.Wrapf(err, "could not open root public key: %s", cfg.RootKeyFile)
+	}
+	rk, _, _, _, err := ssh.ParseAuthorizedKey(rb)
+	if err != nil {
+		return errors.Wrapf(err, "could not parse root public key: %s", cfg.RootKeyFile)
 	}
 
 	ssc := &ssh.ServerConfig{
 		MaxAuthTries:      3,
-		PublicKeyCallback: authenticatePubKey(backend),
+		PublicKeyCallback: authenticatePubKey(backend, rk),
 		AuthLogCallback:   nil,                // TODO log auths
 		ServerVersion:     "SSH-2.0-ruka-0.1", // TODO use actual version
 		BannerCallback:    nil,                // TODO nice banner
@@ -81,24 +93,37 @@ func Start(backend Backend, cfg *Config) error {
 	}
 }
 
-func authenticatePubKey(backend Backend) func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) {
+func authenticatePubKey(backend Backend, rootKey ssh.PublicKey) func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) {
 	return func(cm ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 		t, err := SessionTypeFromString(cm.User())
 		if err != nil {
 			return nil, errors.Wrap(err, "Authentication failed")
 		}
 
-		userID, err := backend.Authenticate(t, key.Marshal())
+		if string(key.Marshal()) == string(rootKey.Marshal()) {
+			if t != SessionType_CONTROL {
+				newErr := fmt.Errorf("Root only allowed in control sessions")
+				return nil, errors.Wrap(newErr, "Authentication failed")
+			}
+
+			return &ssh.Permissions{
+				Extensions: map[string]string{
+					"ruka-session-type": t.String(),
+					"ruka-username":     "root",
+				},
+			}, nil
+		}
+
+		username, err := backend.Authenticate(t, key.Marshal())
 		if err != nil {
 			return nil, errors.Wrap(err, "Authentication failed")
 		}
 
-		perms := &ssh.Permissions{
+		return &ssh.Permissions{
 			Extensions: map[string]string{
 				"ruka-session-type": t.String(),
-				"ruka-user-id":      userID,
+				"ruka-username":     username,
 			},
-		}
-		return perms, nil
+		}, nil
 	}
 }

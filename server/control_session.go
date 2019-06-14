@@ -4,12 +4,15 @@ import (
 	"encoding/binary"
 	"log"
 
+	"github.com/kmwenja/ruka/server/control"
 	"golang.org/x/crypto/ssh"
 )
 
-func handleControlSession(backend Backend, c ssh.Conn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
+func handleControlSession(backend Backend, c *ssh.ServerConn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
 	log.Printf("Control Session: Start")
 	go ssh.DiscardRequests(reqs)
+
+	username := c.Permissions.Extensions["ruka-username"]
 
 	for nC := range chans {
 		if nC.ChannelType() != "session" {
@@ -19,15 +22,16 @@ func handleControlSession(backend Backend, c ssh.Conn, chans <-chan ssh.NewChann
 
 		channel, requests, err := nC.Accept()
 		if err != nil {
-			log.Printf("Error: could not accept channel: %v", err)
+			log.Printf("Control Session: Error: could not accept channel: %v", err)
 			continue
 		}
 
-		go handleControlChannel(backend, channel, requests)
+		go handleControlChannel(username, backend, channel, requests)
 	}
+	log.Printf("Control Session: End")
 }
 
-func handleControlChannel(backend Backend, channel ssh.Channel, reqs <-chan *ssh.Request) {
+func handleControlChannel(username string, backend Backend, channel ssh.Channel, reqs <-chan *ssh.Request) {
 	defer channel.Close()
 
 	// TODO handle window size changes
@@ -37,7 +41,11 @@ OUTER:
 		switch req.Type {
 		case "shell":
 			// only on the shell request do we actually do something
-			ControlShell(backend, channel)
+			sh := control.NewShell(username, backend, channel)
+			err := sh.Run()
+			if err != nil {
+				log.Printf("Control Session: Error: shell error: %v", err)
+			}
 			break OUTER
 		default:
 			// ignore every request but accept them anyway to keep it moving

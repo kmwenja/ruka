@@ -3,13 +3,11 @@ package main
 import (
 	"fmt"
 	"os"
-	"syscall"
 
 	"github.com/kmwenja/ruka/server"
 	"github.com/kmwenja/ruka/server/backends/storm"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
-	"golang.org/x/crypto/ssh/terminal"
 )
 
 func main() {
@@ -48,31 +46,13 @@ func serverCmd() cli.Command {
 					scfg := &server.Config{
 						Addr:        ":2022",
 						HostKeyFile: "/tmp/test",
+						RootKeyFile: "/tmp/test.pub",
 					}
 					backend, err := storm.New("/tmp/data")
 					if err != nil {
 						return errors.Wrapf(err, "could not init backend")
 					}
 					return server.Start(backend, scfg)
-				},
-			},
-			{
-				Name:  "control",
-				Usage: "run ruka server control shell",
-				Action: func(c *cli.Context) error {
-					oldState, err := terminal.MakeRaw(syscall.Stdin)
-					if err != nil {
-						return errors.Wrapf(err, "could not prepare terminal")
-					}
-					defer terminal.Restore(syscall.Stdin, oldState)
-
-					backend, err := storm.New("/tmp/data")
-					if err != nil {
-						return errors.Wrapf(err, "could not init backend")
-					}
-					cio := &combinedIO{os.Stdin, os.Stdout}
-					server.ControlShell(backend, cio)
-					return nil
 				},
 			},
 		},
