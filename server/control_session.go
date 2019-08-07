@@ -1,18 +1,15 @@
 package server
 
 import (
+	"context"
 	"encoding/binary"
 	"log"
 
-	"github.com/kmwenja/ruka/server/control"
 	"golang.org/x/crypto/ssh"
 )
 
-func handleControlSession(backend Backend, c *ssh.ServerConn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
+func (s *Server) handleControlSession(username string, chans <-chan ssh.NewChannel) {
 	log.Printf("Control Session: Start")
-	go ssh.DiscardRequests(reqs)
-
-	username := c.Permissions.Extensions["ruka-username"]
 
 	for nC := range chans {
 		if nC.ChannelType() != "session" {
@@ -26,23 +23,25 @@ func handleControlSession(backend Backend, c *ssh.ServerConn, chans <-chan ssh.N
 			continue
 		}
 
-		go handleControlChannel(username, backend, channel, requests)
+		go s.handleControlChannel(username, channel, requests)
 	}
 	log.Printf("Control Session: End")
 }
 
-func handleControlChannel(username string, backend Backend, channel ssh.Channel, reqs <-chan *ssh.Request) {
+func (s *Server) handleControlChannel(username string, channel ssh.Channel, reqs <-chan *ssh.Request) {
 	defer channel.Close()
 
 	// TODO handle window size changes
+
+	ctx := context.TODO()
 
 OUTER:
 	for req := range reqs {
 		switch req.Type {
 		case "shell":
 			// only on the shell request do we actually do something
-			sh := control.NewShell(username, backend, channel)
-			err := sh.Run()
+			st := newSSHTerminal(channel, ">>> ")
+			err := s.shell(ctx, st, username)
 			if err != nil {
 				log.Printf("Control Session: Error: shell error: %v", err)
 			}

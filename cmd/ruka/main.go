@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"net"
 	"os"
 
+	"github.com/kmwenja/ruka/node"
 	"github.com/kmwenja/ruka/server"
-	"github.com/kmwenja/ruka/server/backends/storm"
+	"github.com/kmwenja/ruka/server/stores/storm"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 )
@@ -43,16 +46,28 @@ func serverCmd() cli.Command {
 				Name:  "start",
 				Usage: "start ruka server based off the current working directory",
 				Action: func(c *cli.Context) error {
-					scfg := &server.Config{
-						Addr:        ":2022",
-						HostKeyFile: "/tmp/test",
-						RootKeyFile: "/tmp/test.pub",
-					}
-					backend, err := storm.New("/tmp/data")
+					store, err := storm.New("/tmp/data")
 					if err != nil {
 						return errors.Wrapf(err, "could not init backend")
 					}
-					return server.Start(backend, scfg)
+
+					s, err := server.New(server.Config{
+						Store:       store,
+						HostKeyFile: "/tmp/test",
+						RootKeyFile: "/tmp/test.pub",
+					})
+					if err != nil {
+						return errors.Wrapf(err, "could not initialize server")
+					}
+
+					addr := ":2022"
+					l, err := net.Listen("tcp", addr)
+					if err != nil {
+						return errors.Wrapf(err, "cannot listen to %s", addr)
+					}
+					defer l.Close()
+					log.Printf("Listening to %s", addr)
+					return s.Serve(l)
 				},
 			},
 		},
@@ -77,8 +92,21 @@ func nodeCmd() cli.Command {
 				Name:  "start",
 				Usage: "start ruka node based off the current working directory",
 				Action: func(c *cli.Context) error {
-					fmt.Println("Start ruka node!")
-					return nil
+					n, err := node.New(node.Config{
+						NodeKeyFile: "/tmp/test.pub",
+						HostKeyFile: "/tmp/test",
+					})
+					if err != nil {
+						return errors.Wrapf(err, "could not initiate node")
+					}
+
+					addr := "127.0.0.1:2022"
+					conn, err := net.Dial("tcp", addr)
+					if err != nil {
+						return errors.Wrapf(err, "could not connect to server at `%s`", addr)
+					}
+					defer conn.Close()
+					return n.Serve(addr, conn)
 				},
 			},
 		},
